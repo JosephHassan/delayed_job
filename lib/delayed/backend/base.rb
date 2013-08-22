@@ -74,7 +74,9 @@ module Delayed
 
       def name
         @name ||= payload_object.respond_to?(:display_name) ?
-                    payload_object.display_name :
+                    (payload_object.method(:display_name).arity == 1 ?
+                      payload_object.display_name(self) :
+                      payload_object.display_name) :
                     payload_object.class.name
       rescue DeserializationError
         ParseObjectFromYaml.match(handler)[1]
@@ -102,7 +104,9 @@ module Delayed
         Delayed::Worker.lifecycle.run_callbacks(:invoke_job, self) do
           begin
             hook :before
-            payload_object.perform
+            payload_object.method(:perform).arity == 1 ?
+              payload_object.perform(self) :
+              payload_object.perform
             hook :success
           rescue Exception => e
             hook :error, e
@@ -111,6 +115,7 @@ module Delayed
             hook :after
           end
         end
+        true
       end
 
       # Unlock this job (note: not saved to DB)
@@ -140,6 +145,18 @@ module Delayed
 
       def fail!
         update_attributes(:failed_at => self.class.db_time_now)
+      end
+
+      def run_pending?
+        failed_at.nil? && (run_at.future? && (locked_at.nil? || locked_at.future?))
+      end
+
+      def currently_in_progress?
+        failed_at.nil? && locked_at.present?
+      end
+
+      def permanently_failed?
+        failed_at.present?
       end
 
     protected
